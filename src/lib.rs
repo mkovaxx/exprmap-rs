@@ -7,12 +7,15 @@ pub enum Expr {
 }
 
 #[derive(Debug, Clone)]
-pub struct ExprMap<T> {
-    vars: HashMap<usize, T>,
-    apps: Option<Box<ExprMap<ExprMapRef>>>,
+pub enum ExprMap<T> {
+    Empty,
+    Multi {
+        vars: HashMap<usize, T>,
+        apps: Box<ExprMap<ExprMapRef>>,
 
-    // store all `ExprMap<T>`s here to avoid recursive type weirdness
-    expr_maps: Vec<ExprMap<T>>,
+        // store all `ExprMap<T>`s here to avoid recursive type weirdness
+        expr_maps: Vec<ExprMap<T>>,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -20,52 +23,65 @@ struct ExprMapRef(usize);
 
 impl<T> ExprMap<T> {
     pub fn new() -> Self {
-        Self {
-            vars: HashMap::new(),
-            // being able to set this simply to None avoids unbounded recursion
-            apps: None,
-            expr_maps: vec![],
+        Self::Empty
+    }
+
+    pub fn singleton(key: Expr, value: T) -> Self {
+        match key {
+            Expr::Var(key_var) => ExprMap::Multi {
+                vars: HashMap::from_iter([(key_var, value)]),
+                apps: Box::new(ExprMap::Empty),
+                expr_maps: vec![],
+            },
+            Expr::App(f, x) => ExprMap::Multi {
+                vars: HashMap::new(),
+                apps: Box::new(ExprMap::singleton(*f, ExprMapRef(0))),
+                expr_maps: vec![ExprMap::singleton(*x, value)],
+            },
         }
     }
 
     pub fn get(&self, key: &Expr) -> Option<&T> {
-        match key {
-            Expr::Var(id) => self.vars.get(id),
-            Expr::App(f, x) => self.apps.as_ref().and_then(|apps| {
-                apps.get(f).and_then(|em_ref: &ExprMapRef| {
-                    let em = &self.expr_maps[em_ref.0];
+        match self {
+            ExprMap::Empty => None,
+            ExprMap::Multi {
+                vars,
+                apps,
+                expr_maps,
+            } => match key {
+                Expr::Var(id) => vars.get(id),
+                Expr::App(f, x) => apps.get(f).and_then(|em_ref: &ExprMapRef| {
+                    let em = &expr_maps[em_ref.0];
                     em.get(x)
-                })
-            }),
+                }),
+            },
         }
     }
 
     pub fn insert(&mut self, key: Expr, value: T) {
-        match key {
-            Expr::Var(id) => {
-                self.vars.insert(id, value);
-            }
-            Expr::App(f, x) => {
-                // lazily initialize to avoid unbounded recursion
-                if self.apps.is_none() {
-                    self.apps = Some(Box::new(ExprMap::new()));
+        match self {
+            ExprMap::Empty => *self = ExprMap::singleton(key, value),
+            ExprMap::Multi {
+                vars,
+                apps,
+                expr_maps,
+            } => match key {
+                Expr::Var(id) => {
+                    vars.insert(id, value);
                 }
-
-                let apps: &mut ExprMap<ExprMapRef> = self.apps.as_mut().unwrap();
-
-                match apps.get(&f) {
+                Expr::App(f, x) => match apps.get(&f) {
                     Some(em_ref) => {
-                        self.expr_maps[em_ref.0].insert(*x, value);
+                        expr_maps[em_ref.0].insert(*x, value);
                     }
                     None => {
-                        let em_ref: ExprMapRef = ExprMapRef(self.expr_maps.len());
+                        let em_ref: ExprMapRef = ExprMapRef(expr_maps.len());
                         let mut only_x: ExprMap<T> = ExprMap::new();
                         only_x.insert(*x, value);
-                        self.expr_maps.push(only_x);
+                        expr_maps.push(only_x);
                         apps.insert(*f, em_ref);
                     }
-                }
-            }
+                },
+            },
         }
     }
 }
