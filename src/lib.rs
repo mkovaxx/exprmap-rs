@@ -9,9 +9,9 @@ pub enum Expr {
 #[derive(Debug, Clone)]
 pub enum ExprMap<T> {
     Empty,
-    Multi {
-        vars: HashMap<usize, T>,
-        apps: Box<ExprMap<ExprMapRef>>,
+    Many {
+        var: HashMap<usize, T>,
+        app: Box<ExprMap<ExprMapRef>>,
 
         // store all `ExprMap<T>`s here to avoid recursive type weirdness
         expr_maps: Vec<ExprMap<T>>,
@@ -26,17 +26,17 @@ impl<T> ExprMap<T> {
         Self::Empty
     }
 
-    pub fn singleton(key: Expr, value: T) -> Self {
+    pub fn one(key: Expr, value: T) -> Self {
         match key {
-            Expr::Var(key_var) => ExprMap::Multi {
-                vars: HashMap::from_iter([(key_var, value)]),
-                apps: Box::new(ExprMap::Empty),
+            Expr::Var(key_var) => ExprMap::Many {
+                var: HashMap::from_iter([(key_var, value)]),
+                app: Box::new(ExprMap::Empty),
                 expr_maps: vec![],
             },
-            Expr::App(f, x) => ExprMap::Multi {
-                vars: HashMap::new(),
-                apps: Box::new(ExprMap::singleton(*f, ExprMapRef(0))),
-                expr_maps: vec![ExprMap::singleton(*x, value)],
+            Expr::App(f, x) => ExprMap::Many {
+                var: HashMap::new(),
+                app: Box::new(ExprMap::one(*f, ExprMapRef(0))),
+                expr_maps: vec![ExprMap::one(*x, value)],
             },
         }
     }
@@ -44,9 +44,9 @@ impl<T> ExprMap<T> {
     pub fn get(&self, key: &Expr) -> Option<&T> {
         match self {
             ExprMap::Empty => None,
-            ExprMap::Multi {
-                vars,
-                apps,
+            ExprMap::Many {
+                var: vars,
+                app: apps,
                 expr_maps,
             } => match key {
                 Expr::Var(id) => vars.get(id),
@@ -60,10 +60,10 @@ impl<T> ExprMap<T> {
 
     pub fn insert(&mut self, key: Expr, value: T) {
         match self {
-            ExprMap::Empty => *self = ExprMap::singleton(key, value),
-            ExprMap::Multi {
-                vars,
-                apps,
+            ExprMap::Empty => *self = ExprMap::one(key, value),
+            ExprMap::Many {
+                var: vars,
+                app: apps,
                 expr_maps,
             } => match key {
                 Expr::Var(id) => {
