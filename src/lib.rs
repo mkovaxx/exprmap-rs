@@ -7,23 +7,23 @@ pub enum Expr {
 }
 
 #[derive(Debug, Clone)]
-pub enum ExprMap<T> {
+pub enum ExprMap<V> {
     Empty,
     Many {
-        var: HashMap<usize, T>,
+        var: HashMap<usize, V>,
         app: Box<ExprMap<usize>>,
 
         // store all `ExprMap<T>`s here to avoid recursive type weirdness
-        app_store: Vec<ExprMap<T>>,
+        app_store: Vec<ExprMap<V>>,
     },
 }
 
-impl<T> ExprMap<T> {
+impl<V> ExprMap<V> {
     pub fn new() -> Self {
         Self::Empty
     }
 
-    pub fn one(key: Expr, value: T) -> Self {
+    pub fn one(key: Expr, value: V) -> Self {
         match key {
             Expr::Var(key_var) => ExprMap::Many {
                 var: HashMap::from_iter([(key_var, value)]),
@@ -38,7 +38,7 @@ impl<T> ExprMap<T> {
         }
     }
 
-    pub fn get(&self, key: &Expr) -> Option<&T> {
+    pub fn get(&self, key: &Expr) -> Option<&V> {
         match self {
             ExprMap::Empty => None,
             ExprMap::Many {
@@ -54,7 +54,7 @@ impl<T> ExprMap<T> {
         }
     }
 
-    pub fn insert(&mut self, key: Expr, value: T) {
+    pub fn insert(&mut self, key: Expr, value: V) {
         match self {
             ExprMap::Empty => *self = ExprMap::one(key, value),
             ExprMap::Many {
