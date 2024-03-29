@@ -11,15 +11,12 @@ pub enum ExprMap<T> {
     Empty,
     Many {
         var: HashMap<usize, T>,
-        app: Box<ExprMap<ExprMapRef>>,
+        app: Box<ExprMap<usize>>,
 
         // store all `ExprMap<T>`s here to avoid recursive type weirdness
-        expr_maps: Vec<ExprMap<T>>,
+        app_store: Vec<ExprMap<T>>,
     },
 }
-
-#[derive(Debug, Clone)]
-struct ExprMapRef(usize);
 
 impl<T> ExprMap<T> {
     pub fn new() -> Self {
@@ -31,12 +28,12 @@ impl<T> ExprMap<T> {
             Expr::Var(key_var) => ExprMap::Many {
                 var: HashMap::from_iter([(key_var, value)]),
                 app: Box::new(ExprMap::Empty),
-                expr_maps: vec![],
+                app_store: vec![],
             },
             Expr::App(f, x) => ExprMap::Many {
                 var: HashMap::new(),
-                app: Box::new(ExprMap::one(*f, ExprMapRef(0))),
-                expr_maps: vec![ExprMap::one(*x, value)],
+                app: Box::new(ExprMap::one(*f, 0)),
+                app_store: vec![ExprMap::one(*x, value)],
             },
         }
     }
@@ -47,13 +44,12 @@ impl<T> ExprMap<T> {
             ExprMap::Many {
                 var: vars,
                 app: apps,
-                expr_maps,
+                app_store: expr_maps,
             } => match key {
                 Expr::Var(id) => vars.get(id),
-                Expr::App(f, x) => apps.get(f).and_then(|em_ref: &ExprMapRef| {
-                    let em = &expr_maps[em_ref.0];
-                    em.get(x)
-                }),
+                Expr::App(f, x) => apps
+                    .get(f)
+                    .and_then(|index: &usize| expr_maps[*index].get(x)),
             },
         }
     }
@@ -62,23 +58,21 @@ impl<T> ExprMap<T> {
         match self {
             ExprMap::Empty => *self = ExprMap::one(key, value),
             ExprMap::Many {
-                var: vars,
-                app: apps,
-                expr_maps,
+                var,
+                app,
+                app_store,
             } => match key {
                 Expr::Var(id) => {
-                    vars.insert(id, value);
+                    var.insert(id, value);
                 }
-                Expr::App(f, x) => match apps.get(&f) {
-                    Some(em_ref) => {
-                        expr_maps[em_ref.0].insert(*x, value);
+                Expr::App(f, x) => match app.get(&f) {
+                    Some(index) => {
+                        app_store[*index].insert(*x, value);
                     }
                     None => {
-                        let em_ref: ExprMapRef = ExprMapRef(expr_maps.len());
-                        let mut only_x: ExprMap<T> = ExprMap::new();
-                        only_x.insert(*x, value);
-                        expr_maps.push(only_x);
-                        apps.insert(*f, em_ref);
+                        let index = app_store.len();
+                        app_store.push(ExprMap::one(*x, value));
+                        app.insert(*f, index);
                     }
                 },
             },
