@@ -4,6 +4,7 @@ use slotmap::{DefaultKey, SlotMap};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Expr {
+    Zero,
     Var(usize),
     App(Box<Expr>, Box<Expr>),
 }
@@ -113,7 +114,7 @@ impl<V> MergeWith<V> for ExprMap<V> {
                     em.merge_with(*em_that, func);
                     *self = ExprMap::Many(em);
                 }
-            }
+            },
         }
     }
 }
@@ -121,6 +122,7 @@ impl<V> MergeWith<V> for ExprMap<V> {
 #[derive(Debug, Clone)]
 #[allow(non_camel_case_types)]
 pub struct Many_ExprMap<V> {
+    zero: Option<V>,
     var: HashMap<usize, V>,
     app: ExprMap<DefaultKey>,
 
@@ -131,6 +133,7 @@ pub struct Many_ExprMap<V> {
 impl<V> Many_ExprMap<V> {
     pub fn new() -> Self {
         Self {
+            zero: None,
             var: HashMap::new(),
             app: ExprMap::Empty,
             app_store: SlotMap::new(),
@@ -139,6 +142,7 @@ impl<V> Many_ExprMap<V> {
 
     pub fn get(&self, key: &Expr) -> Option<&V> {
         match key {
+            Expr::Zero => self.zero.as_ref(),
             Expr::Var(id) => self.var.get(id),
             Expr::App(f, x) => self
                 .app
@@ -149,6 +153,9 @@ impl<V> Many_ExprMap<V> {
 
     pub fn insert(&mut self, key: Expr, value: V) {
         match key {
+            Expr::Zero => {
+                self.zero = Some(value);
+            }
             Expr::Var(id) => {
                 self.var.insert(id, value);
             }
@@ -160,12 +167,13 @@ impl<V> Many_ExprMap<V> {
                     let app_key = self.app_store.insert(ExprMap::One(*x, value));
                     self.app.insert(*f, app_key);
                 }
-            }
+            },
         }
     }
 
     pub fn remove(&mut self, key: &Expr) -> Option<V> {
         match key {
+            Expr::Zero => self.zero.take(),
             Expr::Var(id) => self.var.remove(id),
             Expr::App(f, x) => self
                 .app
