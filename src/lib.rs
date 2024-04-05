@@ -2,7 +2,7 @@ use std::{collections::HashMap, hash::Hash};
 
 use slotmap::{DefaultKey, SlotMap};
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Expr {
     Var(usize),
     App(Box<Expr>, Box<Expr>),
@@ -11,17 +11,9 @@ pub enum Expr {
 #[derive(Debug, Clone)]
 pub enum ExprMap<V> {
     Empty,
+    // TODO: consider putting `Box`es in here
+    One(Expr, V),
     Many(Box<Many_ExprMap<V>>),
-}
-
-#[derive(Debug, Clone)]
-#[allow(non_camel_case_types)]
-pub struct Many_ExprMap<V> {
-    var: HashMap<usize, V>,
-    app: ExprMap<DefaultKey>,
-
-    // store all `ExprMap<V>`s here to avoid recursive type weirdness
-    app_store: SlotMap<DefaultKey, ExprMap<V>>,
 }
 
 impl<V> ExprMap<V> {
@@ -29,68 +21,67 @@ impl<V> ExprMap<V> {
         Self::Empty
     }
 
-    pub fn one(key: Expr, value: V) -> Self {
-        match key {
-            Expr::Var(key_var) => ExprMap::Many(Box::new(Many_ExprMap {
-                var: HashMap::from_iter([(key_var, value)]),
-                app: ExprMap::Empty,
-                app_store: SlotMap::new(),
-            })),
-            Expr::App(f, x) => {
-                let mut app_store = SlotMap::new();
-                let app_key = app_store.insert(ExprMap::one(*x, value));
-                ExprMap::Many(Box::new(Many_ExprMap {
-                    var: HashMap::new(),
-                    app: ExprMap::one(*f, app_key),
-                    app_store,
-                }))
-            }
-        }
-    }
-
     pub fn get(&self, key: &Expr) -> Option<&V> {
         match self {
             ExprMap::Empty => None,
-            ExprMap::Many(em) => match key {
-                Expr::Var(id) => em.var.get(id),
-                Expr::App(f, x) => em
-                    .app
-                    .get(f)
-                    .and_then(|store_key| em.app_store[*store_key].get(x)),
-            },
+            ExprMap::One(k, value) => {
+                if k == key {
+                    Some(value)
+                } else {
+                    None
+                }
+            }
+            ExprMap::Many(em) => em.get(key),
         }
     }
 
     pub fn insert(&mut self, key: Expr, value: V) {
-        match self {
-            ExprMap::Empty => *self = ExprMap::one(key, value),
-            ExprMap::Many(em) => match key {
-                Expr::Var(id) => {
-                    em.var.insert(id, value);
-                }
-                Expr::App(f, x) => match em.app.get(&f) {
-                    Some(store_key) => {
-                        em.app_store[*store_key].insert(*x, value);
-                    }
-                    None => {
-                        let app_key = em.app_store.insert(ExprMap::one(*x, value));
-                        em.app.insert(*f, app_key);
-                    }
-                },
-            },
+        // an offering to the Borrow Checker
+        let mut old_self = ExprMap::Empty;
+        std::mem::swap(self, &mut old_self);
+
+        match old_self {
+            ExprMap::Empty => {
+                *self = ExprMap::One(key, value);
+            }
+            ExprMap::One(k, v) => {
+                let mut em = Box::new(Many_ExprMap::new());
+                em.insert(k, v);
+                em.insert(key, value);
+                *self = ExprMap::Many(em);
+            }
+            ExprMap::Many(mut em) => {
+                em.insert(key, value);
+                *self = ExprMap::Many(em);
+            }
         }
     }
 
     pub fn remove(&mut self, key: &Expr) -> Option<V> {
-        match self {
-            ExprMap::Empty => None,
-            ExprMap::Many(em) => match key {
-                Expr::Var(id) => em.var.remove(id),
-                Expr::App(f, x) => em
-                    .app
-                    .remove(&f)
-                    .and_then(|store_key| em.app_store[store_key].remove(x)),
-            },
+        // an offering to the Borrow Checker
+        let mut old_self = ExprMap::Empty;
+        std::mem::swap(self, &mut old_self);
+
+        match old_self {
+            ExprMap::Empty => {
+                *self = ExprMap::Empty;
+                None
+            }
+            ExprMap::One(k, value) => {
+                if k == *key {
+                    *self = ExprMap::Empty;
+                    Some(value)
+                } else {
+                    *self = ExprMap::One(k, value);
+                    None
+                }
+            }
+            ExprMap::Many(mut em) => {
+                let value = em.remove(key);
+                // TODO: collapse into One when possible
+                *self = ExprMap::Many(em);
+                value
+            }
         }
     }
 }
@@ -116,6 +107,76 @@ impl<V> MergeWith<V> for ExprMap<V> {
                 em1.app_store[*v].merge_with(em, func);
             });
         }
+    }
+}
+
+#[derive(Debug, Clone)]
+#[allow(non_camel_case_types)]
+pub struct Many_ExprMap<V> {
+    var: HashMap<usize, V>,
+    app: ExprMap<DefaultKey>,
+
+    // store all `ExprMap<V>`s here to avoid recursive type weirdness
+    app_store: SlotMap<DefaultKey, ExprMap<V>>,
+}
+
+impl<V> Many_ExprMap<V> {
+    pub fn new() -> Self {
+        Self {
+            var: HashMap::new(),
+            app: ExprMap::Empty,
+            app_store: SlotMap::new(),
+        }
+    }
+
+    pub fn get(&self, key: &Expr) -> Option<&V> {
+        match key {
+            Expr::Var(id) => self.var.get(id),
+            Expr::App(f, x) => self
+                .app
+                .get(f)
+                .and_then(|store_key| self.app_store[*store_key].get(x)),
+        }
+    }
+
+    pub fn insert(&mut self, key: Expr, value: V) {
+        match key {
+            Expr::Var(id) => {
+                self.var.insert(id, value);
+            }
+            Expr::App(f, x) => match self.app.get(&f) {
+                Some(store_key) => {
+                    self.app_store[*store_key].insert(*x, value);
+                }
+                None => {
+                    let app_key = self.app_store.insert(ExprMap::One(*x, value));
+                    self.app.insert(*f, app_key);
+                }
+            },
+        }
+    }
+
+    pub fn remove(&mut self, key: &Expr) -> Option<V> {
+        match key {
+            Expr::Var(id) => self.var.remove(id),
+            Expr::App(f, x) => self
+                .app
+                .remove(&f)
+                .and_then(|store_key| self.app_store[store_key].remove(x)),
+        }
+    }
+}
+
+impl<V> MergeWith<V> for Many_ExprMap<V> {
+    fn merge_with<F>(&mut self, mut that: Self, func: &mut F)
+    where
+        F: FnMut(&mut V, V),
+    {
+        self.var.merge_with(that.var, func);
+        self.app.merge_with(that.app, &mut |v, w| {
+            let em = that.app_store.remove(w).unwrap();
+            self.app_store[*v].merge_with(em, func);
+        });
     }
 }
 
