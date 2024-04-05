@@ -10,6 +10,83 @@ pub enum Expr {
 }
 
 #[derive(Debug, Clone)]
+#[allow(non_camel_case_types)]
+pub struct Many_ExprMap<V> {
+    zero: Option<V>,
+    var: HashMap<usize, V>,
+    app: ExprMap<DefaultKey>,
+
+    // store all `ExprMap<V>`s here to avoid recursive type weirdness
+    app_store: SlotMap<DefaultKey, ExprMap<V>>,
+}
+
+impl<V> Many_ExprMap<V> {
+    pub fn new() -> Self {
+        Self {
+            zero: None,
+            var: HashMap::new(),
+            app: ExprMap::Empty,
+            app_store: SlotMap::new(),
+        }
+    }
+
+    pub fn get(&self, key: &Expr) -> Option<&V> {
+        match key {
+            Expr::Zero => self.zero.as_ref(),
+            Expr::Var(id) => self.var.get(id),
+            Expr::App(f, x) => self
+                .app
+                .get(f)
+                .and_then(|store_key| self.app_store[*store_key].get(x)),
+        }
+    }
+
+    pub fn insert(&mut self, key: Expr, value: V) {
+        match key {
+            Expr::Zero => {
+                self.zero = Some(value);
+            }
+            Expr::Var(id) => {
+                self.var.insert(id, value);
+            }
+            Expr::App(f, x) => match self.app.get(&f) {
+                Some(store_key) => {
+                    self.app_store[*store_key].insert(*x, value);
+                }
+                None => {
+                    let app_key = self.app_store.insert(ExprMap::One(*x, value));
+                    self.app.insert(*f, app_key);
+                }
+            },
+        }
+    }
+
+    pub fn remove(&mut self, key: &Expr) -> Option<V> {
+        match key {
+            Expr::Zero => self.zero.take(),
+            Expr::Var(id) => self.var.remove(id),
+            Expr::App(f, x) => self
+                .app
+                .remove(&f)
+                .and_then(|store_key| self.app_store[store_key].remove(x)),
+        }
+    }
+}
+
+impl<V> MergeWith<V> for Many_ExprMap<V> {
+    fn merge_with<F>(&mut self, mut that: Self, func: &mut F)
+    where
+        F: FnMut(&mut V, V),
+    {
+        self.var.merge_with(that.var, func);
+        self.app.merge_with(that.app, &mut |v, w| {
+            let em = that.app_store.remove(w).unwrap();
+            self.app_store[*v].merge_with(em, func);
+        });
+    }
+}
+
+#[derive(Debug, Clone)]
 pub enum ExprMap<V> {
     Empty,
     // TODO: consider putting `Box`es in here
@@ -116,83 +193,6 @@ impl<V> MergeWith<V> for ExprMap<V> {
                 }
             },
         }
-    }
-}
-
-#[derive(Debug, Clone)]
-#[allow(non_camel_case_types)]
-pub struct Many_ExprMap<V> {
-    zero: Option<V>,
-    var: HashMap<usize, V>,
-    app: ExprMap<DefaultKey>,
-
-    // store all `ExprMap<V>`s here to avoid recursive type weirdness
-    app_store: SlotMap<DefaultKey, ExprMap<V>>,
-}
-
-impl<V> Many_ExprMap<V> {
-    pub fn new() -> Self {
-        Self {
-            zero: None,
-            var: HashMap::new(),
-            app: ExprMap::Empty,
-            app_store: SlotMap::new(),
-        }
-    }
-
-    pub fn get(&self, key: &Expr) -> Option<&V> {
-        match key {
-            Expr::Zero => self.zero.as_ref(),
-            Expr::Var(id) => self.var.get(id),
-            Expr::App(f, x) => self
-                .app
-                .get(f)
-                .and_then(|store_key| self.app_store[*store_key].get(x)),
-        }
-    }
-
-    pub fn insert(&mut self, key: Expr, value: V) {
-        match key {
-            Expr::Zero => {
-                self.zero = Some(value);
-            }
-            Expr::Var(id) => {
-                self.var.insert(id, value);
-            }
-            Expr::App(f, x) => match self.app.get(&f) {
-                Some(store_key) => {
-                    self.app_store[*store_key].insert(*x, value);
-                }
-                None => {
-                    let app_key = self.app_store.insert(ExprMap::One(*x, value));
-                    self.app.insert(*f, app_key);
-                }
-            },
-        }
-    }
-
-    pub fn remove(&mut self, key: &Expr) -> Option<V> {
-        match key {
-            Expr::Zero => self.zero.take(),
-            Expr::Var(id) => self.var.remove(id),
-            Expr::App(f, x) => self
-                .app
-                .remove(&f)
-                .and_then(|store_key| self.app_store[store_key].remove(x)),
-        }
-    }
-}
-
-impl<V> MergeWith<V> for Many_ExprMap<V> {
-    fn merge_with<F>(&mut self, mut that: Self, func: &mut F)
-    where
-        F: FnMut(&mut V, V),
-    {
-        self.var.merge_with(that.var, func);
-        self.app.merge_with(that.app, &mut |v, w| {
-            let em = that.app_store.remove(w).unwrap();
-            self.app_store[*v].merge_with(em, func);
-        });
     }
 }
 
