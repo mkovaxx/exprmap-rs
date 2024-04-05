@@ -11,14 +11,14 @@ pub enum Expr {
 #[derive(Debug, Clone)]
 pub enum ExprMap<V> {
     Empty,
-    Many(Many_ExprMap<V>),
+    Many(Box<Many_ExprMap<V>>),
 }
 
 #[derive(Debug, Clone)]
 #[allow(non_camel_case_types)]
 pub struct Many_ExprMap<V> {
     var: HashMap<usize, V>,
-    app: Box<ExprMap<DefaultKey>>,
+    app: ExprMap<DefaultKey>,
 
     // store all `ExprMap<V>`s here to avoid recursive type weirdness
     app_store: SlotMap<DefaultKey, ExprMap<V>>,
@@ -31,19 +31,19 @@ impl<V> ExprMap<V> {
 
     pub fn one(key: Expr, value: V) -> Self {
         match key {
-            Expr::Var(key_var) => ExprMap::Many(Many_ExprMap {
+            Expr::Var(key_var) => ExprMap::Many(Box::new(Many_ExprMap {
                 var: HashMap::from_iter([(key_var, value)]),
-                app: Box::new(ExprMap::Empty),
+                app: ExprMap::Empty,
                 app_store: SlotMap::new(),
-            }),
+            })),
             Expr::App(f, x) => {
                 let mut app_store = SlotMap::new();
                 let app_key = app_store.insert(ExprMap::one(*x, value));
-                ExprMap::Many(Many_ExprMap {
+                ExprMap::Many(Box::new(Many_ExprMap {
                     var: HashMap::new(),
-                    app: Box::new(ExprMap::one(*f, app_key)),
+                    app: ExprMap::one(*f, app_key),
                     app_store,
-                })
+                }))
             }
         }
     }
@@ -111,7 +111,7 @@ impl<V> MergeWith<V> for ExprMap<V> {
 
         if let (ExprMap::Many(em1), ExprMap::Many(mut em2)) = (self, that) {
             em1.var.merge_with(em2.var, func);
-            em1.app.merge_with(*em2.app, &mut |v, w| {
+            em1.app.merge_with(em2.app, &mut |v, w| {
                 let em = em2.app_store.remove(w).unwrap();
                 em1.app_store[*v].merge_with(em, func);
             });
