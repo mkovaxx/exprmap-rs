@@ -91,21 +91,29 @@ impl<V> MergeWith<V> for ExprMap<V> {
     where
         F: FnMut(&mut V, V),
     {
-        if let ExprMap::Empty = that {
-            return;
-        }
+        // an offering to the Borrow Checker
+        let mut old_self = ExprMap::Empty;
+        std::mem::swap(self, &mut old_self);
 
-        if let ExprMap::Empty = self {
-            *self = that;
-            return;
-        }
-
-        if let (ExprMap::Many(em1), ExprMap::Many(mut em2)) = (self, that) {
-            em1.var.merge_with(em2.var, func);
-            em1.app.merge_with(em2.app, &mut |v, w| {
-                let em = em2.app_store.remove(w).unwrap();
-                em1.app_store[*v].merge_with(em, func);
-            });
+        match old_self {
+            ExprMap::Empty => {
+                *self = that;
+            }
+            ExprMap::One(key, value) => {
+                *self = that;
+                self.insert(key, value);
+            }
+            ExprMap::Many(mut em) => match that {
+                ExprMap::Empty => {}
+                ExprMap::One(key, value) => {
+                    em.insert(key, value);
+                    *self = ExprMap::Many(em);
+                }
+                ExprMap::Many(em_that) => {
+                    em.merge_with(*em_that, func);
+                    *self = ExprMap::Many(em);
+                }
+            }
         }
     }
 }
@@ -152,7 +160,7 @@ impl<V> Many_ExprMap<V> {
                     let app_key = self.app_store.insert(ExprMap::One(*x, value));
                     self.app.insert(*f, app_key);
                 }
-            },
+            }
         }
     }
 
