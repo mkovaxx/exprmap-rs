@@ -80,6 +80,19 @@ impl<V> ExprMap<V> {
             },
         }
     }
+
+    pub fn remove(&mut self, key: &Expr) -> Option<V> {
+        match self {
+            ExprMap::Empty => None,
+            ExprMap::Many(em) => match key {
+                Expr::Var(id) => em.var.remove(id),
+                Expr::App(f, x) => em
+                    .app
+                    .remove(&f)
+                    .and_then(|store_key| em.app_store[store_key].remove(x)),
+            },
+        }
+    }
 }
 
 impl<V> MergeWith<V> for ExprMap<V> {
