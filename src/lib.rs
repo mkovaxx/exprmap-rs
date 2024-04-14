@@ -38,26 +38,6 @@ impl<V> Many_ExprMap<V> {
         }
     }
 
-    pub fn insert(&mut self, key: Expr, value: V) {
-        match key {
-            Expr::Zero => {
-                self.zero = Some(value);
-            }
-            Expr::Var(id) => {
-                self.var.insert(id, value);
-            }
-            Expr::App(f, x) => match self.app.0.get(&f) {
-                Some(store_key) => {
-                    self.app.1[*store_key].insert(*x, value);
-                }
-                None => {
-                    let app_key = self.app.1.insert(ExprMap::One(*x, value));
-                    self.app.0.insert(*f, app_key);
-                }
-            },
-        }
-    }
-
     pub fn remove(&mut self, key: &Expr) -> Option<V> {
         match key {
             Expr::Zero => self.zero.take(),
@@ -70,7 +50,25 @@ impl<V> Many_ExprMap<V> {
     }
 }
 
-impl<V> MergeWith<V> for Many_ExprMap<V> {
+impl<V> MergeWith<Expr, V> for Many_ExprMap<V> {
+    fn insert_with<F>(&mut self, key: Expr, value: V, func: &mut F)
+    where
+        F: FnMut(&mut V, V),
+    {
+        match key {
+            Expr::Zero => match self.zero.as_mut() {
+                Some(mut v) => func(&mut v, value),
+                None => self.zero = Some(value),
+            },
+            Expr::Var(var_key) => {
+                self.var.insert_with(var_key, value, func);
+            }
+            Expr::App(f, x) => {
+                todo!();
+            }
+        }
+    }
+
     fn merge_with<F>(&mut self, mut that: Self, func: &mut F)
     where
         F: FnMut(&mut V, V),
@@ -111,25 +109,7 @@ impl<V> ExprMap<V> {
     }
 
     pub fn insert(&mut self, key: Expr, value: V) {
-        // an offering to the Borrow Checker
-        let mut old_self = ExprMap::Empty;
-        std::mem::swap(self, &mut old_self);
-
-        match old_self {
-            ExprMap::Empty => {
-                *self = ExprMap::One(key, value);
-            }
-            ExprMap::One(k, v) => {
-                let mut em = Box::new(Many_ExprMap::new());
-                em.insert(k, v);
-                em.insert(key, value);
-                *self = ExprMap::Many(em);
-            }
-            ExprMap::Many(mut em) => {
-                em.insert(key, value);
-                *self = ExprMap::Many(em);
-            }
-        }
+        self.merge_with(ExprMap::One(key, value), &mut |v, w| *v = w);
     }
 
     pub fn remove(&mut self, key: &Expr) -> Option<V> {
@@ -161,8 +141,15 @@ impl<V> ExprMap<V> {
     }
 }
 
-impl<V> MergeWith<V> for ExprMap<V> {
-    fn merge_with<F>(&mut self, that: Self, func: &mut F)
+impl<V> MergeWith<Expr, V> for ExprMap<V> {
+    fn insert_with<F>(&mut self, key: Expr, value: V, func: &mut F)
+    where
+        F: FnMut(&mut V, V),
+    {
+        todo!()
+    }
+
+    fn merge_with<F>(&mut self, mut that: Self, func: &mut F)
     where
         F: FnMut(&mut V, V),
     {
@@ -170,33 +157,53 @@ impl<V> MergeWith<V> for ExprMap<V> {
         let mut old_self = ExprMap::Empty;
         std::mem::swap(self, &mut old_self);
 
-        match old_self {
-            ExprMap::Empty => {
+        match (old_self, that) {
+            (ExprMap::Empty, that) => {
                 *self = that;
             }
-            ExprMap::One(key, value) => {
-                *self = that;
-                self.insert(key, value);
+            (old_self, ExprMap::Empty) => {
+                *self = old_self;
             }
-            ExprMap::Many(mut em) => match that {
-                ExprMap::Empty => {}
-                ExprMap::One(key, value) => {
-                    em.insert(key, value);
-                    *self = ExprMap::Many(em);
-                }
-                ExprMap::Many(em_that) => {
-                    em.merge_with(*em_that, func);
-                    *self = ExprMap::Many(em);
-                }
-            },
+            (ExprMap::One(k1, v1), ExprMap::One(k2, v2)) => {
+                let mut m = Box::new(Many_ExprMap::new());
+                m.insert_with(k1, v1, func);
+                m.insert_with(k2, v2, func);
+                *self = ExprMap::Many(m);
+            }
+            (ExprMap::Many(mut m1), ExprMap::One(k2, v2)) => {
+                m1.insert_with(k2, v2, func);
+                *self = ExprMap::Many(m1);
+            }
+            (ExprMap::One(k1, v1), ExprMap::Many(mut m2)) => {
+                m2.insert_with(k1, v1, func);
+                *self = ExprMap::Many(m2);
+            }
+            (ExprMap::Many(mut m1), ExprMap::Many(m2)) => {
+                m1.merge_with(*m2, func);
+                *self = ExprMap::Many(m1);
+            }
         }
     }
 }
 
-impl<K, V> MergeWith<V> for HashMap<K, V>
+impl<K, V> MergeWith<K, V> for HashMap<K, V>
 where
     K: Eq + Hash,
 {
+    fn insert_with<F>(&mut self, key: K, value: V, func: &mut F)
+    where
+        F: FnMut(&mut V, V),
+    {
+        match self.entry(key) {
+            std::collections::hash_map::Entry::Occupied(mut entry) => {
+                func(entry.get_mut(), value);
+            }
+            std::collections::hash_map::Entry::Vacant(entry) => {
+                entry.insert(value);
+            }
+        }
+    }
+
     fn merge_with<F>(&mut self, that: Self, func: &mut F)
     where
         F: FnMut(&mut V, V),
@@ -214,7 +221,11 @@ where
     }
 }
 
-trait MergeWith<V> {
+trait MergeWith<K, V> {
+    fn insert_with<F>(&mut self, key: K, value: V, func: &mut F)
+    where
+        F: FnMut(&mut V, V);
+
     fn merge_with<F>(&mut self, that: Self, func: &mut F)
     where
         F: FnMut(&mut V, V);
