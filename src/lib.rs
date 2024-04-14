@@ -14,10 +14,8 @@ pub enum Expr {
 pub struct Many_ExprMap<V> {
     zero: Option<V>,
     var: HashMap<usize, V>,
-    app: ExprMap<DefaultKey>,
-
-    // store all `ExprMap<V>`s here to avoid recursive type weirdness
-    app_store: SlotMap<DefaultKey, ExprMap<V>>,
+    // factor `ExprMap<ExprMap<V>>` into two parts to prevent recursive type weirdness
+    app: (ExprMap<DefaultKey>, SlotMap<DefaultKey, ExprMap<V>>),
 }
 
 impl<V> Many_ExprMap<V> {
@@ -25,8 +23,7 @@ impl<V> Many_ExprMap<V> {
         Self {
             zero: None,
             var: HashMap::new(),
-            app: ExprMap::Empty,
-            app_store: SlotMap::new(),
+            app: (ExprMap::Empty, SlotMap::new()),
         }
     }
 
@@ -34,10 +31,10 @@ impl<V> Many_ExprMap<V> {
         match key {
             Expr::Zero => self.zero.as_ref(),
             Expr::Var(id) => self.var.get(id),
-            Expr::App(f, x) => self
-                .app
-                .get(f)
-                .and_then(|store_key| self.app_store[*store_key].get(x)),
+            Expr::App(f, x) => {
+                let store_key = self.app.0.get(f)?;
+                self.app.1[*store_key].get(x)
+            }
         }
     }
 
@@ -49,13 +46,13 @@ impl<V> Many_ExprMap<V> {
             Expr::Var(id) => {
                 self.var.insert(id, value);
             }
-            Expr::App(f, x) => match self.app.get(&f) {
+            Expr::App(f, x) => match self.app.0.get(&f) {
                 Some(store_key) => {
-                    self.app_store[*store_key].insert(*x, value);
+                    self.app.1[*store_key].insert(*x, value);
                 }
                 None => {
-                    let app_key = self.app_store.insert(ExprMap::One(*x, value));
-                    self.app.insert(*f, app_key);
+                    let app_key = self.app.1.insert(ExprMap::One(*x, value));
+                    self.app.0.insert(*f, app_key);
                 }
             },
         }
@@ -65,10 +62,10 @@ impl<V> Many_ExprMap<V> {
         match key {
             Expr::Zero => self.zero.take(),
             Expr::Var(id) => self.var.remove(id),
-            Expr::App(f, x) => self
-                .app
-                .remove(&f)
-                .and_then(|store_key| self.app_store[store_key].remove(x)),
+            Expr::App(f, x) => {
+                let store_key = self.app.0.remove(&f)?;
+                self.app.1[store_key].remove(x)
+            }
         }
     }
 }
@@ -79,9 +76,9 @@ impl<V> MergeWith<V> for Many_ExprMap<V> {
         F: FnMut(&mut V, V),
     {
         self.var.merge_with(that.var, func);
-        self.app.merge_with(that.app, &mut |v, w| {
-            let em = that.app_store.remove(w).unwrap();
-            self.app_store[*v].merge_with(em, func);
+        self.app.0.merge_with(that.app.0, &mut |v, w| {
+            let em = that.app.1.remove(w).unwrap();
+            self.app.1[*v].merge_with(em, func);
         });
     }
 }
