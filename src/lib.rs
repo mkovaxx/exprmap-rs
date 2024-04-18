@@ -50,34 +50,17 @@ impl<V> Many_ExprMap<V> {
     }
 }
 
-impl<V> MergeWith<Expr, V> for Many_ExprMap<V> {
-    fn insert_with<F>(&mut self, key: Expr, value: V, func: &mut F)
-    where
-        F: FnMut(&mut V, V),
-    {
-        match key {
-            Expr::Zero => match self.zero.as_mut() {
-                Some(mut v) => func(&mut v, value),
-                None => self.zero = Some(value),
-            },
-            Expr::Var(var_key) => {
-                self.var.insert_with(var_key, value, func);
-            }
-            Expr::App(f, x) => {
-                todo!();
-            }
-        }
-    }
+impl<V> MergeWith<Self> for Many_ExprMap<V> {
+    type Value = V;
 
-    fn merge_with<F>(&mut self, mut that: Self, func: &mut F)
+    fn merge_with<F>(&mut self, that: Self, func: &mut F)
     where
-        F: FnMut(&mut V, V),
+        F: FnMut(&mut Self::Value, Self::Value),
     {
+        // TODO: self.zero
         self.var.merge_with(that.var, func);
-        self.app.0.merge_with(that.app.0, &mut |v, w| {
-            let em = that.app.1.remove(w).unwrap();
-            self.app.1[*v].merge_with(em, func);
-        });
+        self.app
+            .merge_with(that.app, &mut |v, w| v.merge_with(w, func));
     }
 }
 
@@ -141,17 +124,12 @@ impl<V> ExprMap<V> {
     }
 }
 
-impl<V> MergeWith<Expr, V> for ExprMap<V> {
-    fn insert_with<F>(&mut self, key: Expr, value: V, func: &mut F)
-    where
-        F: FnMut(&mut V, V),
-    {
-        todo!()
-    }
+impl<V> MergeWith<Self> for ExprMap<V> {
+    type Value = V;
 
-    fn merge_with<F>(&mut self, mut that: Self, func: &mut F)
+    fn merge_with<F>(&mut self, that: Self, func: &mut F)
     where
-        F: FnMut(&mut V, V),
+        F: FnMut(&mut Self::Value, Self::Value),
     {
         // an offering to the Borrow Checker
         let mut old_self = ExprMap::Empty;
@@ -166,16 +144,15 @@ impl<V> MergeWith<Expr, V> for ExprMap<V> {
             }
             (ExprMap::One(k1, v1), ExprMap::One(k2, v2)) => {
                 let mut m = Box::new(Many_ExprMap::new());
-                m.insert_with(k1, v1, func);
-                m.insert_with(k2, v2, func);
+                todo!();
                 *self = ExprMap::Many(m);
             }
             (ExprMap::Many(mut m1), ExprMap::One(k2, v2)) => {
-                m1.insert_with(k2, v2, func);
+                todo!();
                 *self = ExprMap::Many(m1);
             }
             (ExprMap::One(k1, v1), ExprMap::Many(mut m2)) => {
-                m2.insert_with(k1, v1, func);
+                todo!();
                 *self = ExprMap::Many(m2);
             }
             (ExprMap::Many(mut m1), ExprMap::Many(m2)) => {
@@ -186,27 +163,30 @@ impl<V> MergeWith<Expr, V> for ExprMap<V> {
     }
 }
 
-impl<K, V> MergeWith<K, V> for HashMap<K, V>
+impl<M> MergeWith<Self> for (ExprMap<DefaultKey>, SlotMap<DefaultKey, M>) {
+    type Value = M;
+
+    fn merge_with<F>(&mut self, mut that: Self, func: &mut F)
+    where
+        F: FnMut(&mut Self::Value, Self::Value),
+    {
+        ExprMap::<DefaultKey>::merge_with(&mut self.0, that.0, &mut |v, w| {
+            let m1 = &mut self.1[*v];
+            let m2 = that.1.remove(w).unwrap();
+            func(m1, m2);
+        });
+    }
+}
+
+impl<K, V> MergeWith<Self> for HashMap<K, V>
 where
     K: Eq + Hash,
 {
-    fn insert_with<F>(&mut self, key: K, value: V, func: &mut F)
-    where
-        F: FnMut(&mut V, V),
-    {
-        match self.entry(key) {
-            std::collections::hash_map::Entry::Occupied(mut entry) => {
-                func(entry.get_mut(), value);
-            }
-            std::collections::hash_map::Entry::Vacant(entry) => {
-                entry.insert(value);
-            }
-        }
-    }
+    type Value = V;
 
     fn merge_with<F>(&mut self, that: Self, func: &mut F)
     where
-        F: FnMut(&mut V, V),
+        F: FnMut(&mut Self::Value, Self::Value),
     {
         for (k2, v2) in that {
             match self.entry(k2) {
@@ -221,14 +201,12 @@ where
     }
 }
 
-trait MergeWith<K, V> {
-    fn insert_with<F>(&mut self, key: K, value: V, func: &mut F)
-    where
-        F: FnMut(&mut V, V);
+trait MergeWith<M> {
+    type Value;
 
-    fn merge_with<F>(&mut self, that: Self, func: &mut F)
+    fn merge_with<F>(&mut self, that: M, func: &mut F)
     where
-        F: FnMut(&mut V, V);
+        F: FnMut(&mut Self::Value, Self::Value);
 }
 
 #[cfg(test)]
