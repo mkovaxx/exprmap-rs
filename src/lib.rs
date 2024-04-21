@@ -53,14 +53,10 @@ impl<V> Many_ExprMap<V> {
 impl<V> MergeWith<Self> for Many_ExprMap<V> {
     type Value = V;
 
-    fn merge_with<F>(&mut self, that: Self, func: &mut F)
-    where
-        F: FnMut(&mut Self::Value, Self::Value),
-    {
+    fn merge_with(&mut self, that: Self, func: &mut dyn FnMut(&mut Self::Value, Self::Value)) {
         // TODO: self.zero
         self.var.merge_with(that.var, func);
-        self.app
-            .merge_with(that.app, &mut |v, w| v.merge_with(w, func));
+        self.app.merge_with(that.app, func);
     }
 }
 
@@ -127,10 +123,7 @@ impl<V> ExprMap<V> {
 impl<V> MergeWith<Self> for ExprMap<V> {
     type Value = V;
 
-    fn merge_with<F>(&mut self, that: Self, func: &mut F)
-    where
-        F: FnMut(&mut Self::Value, Self::Value),
-    {
+    fn merge_with(&mut self, that: Self, func: &mut dyn FnMut(&mut Self::Value, Self::Value)) {
         // an offering to the Borrow Checker
         let mut old_self = ExprMap::Empty;
         std::mem::swap(self, &mut old_self);
@@ -163,17 +156,17 @@ impl<V> MergeWith<Self> for ExprMap<V> {
     }
 }
 
-impl<M> MergeWith<Self> for (ExprMap<DefaultKey>, SlotMap<DefaultKey, M>) {
-    type Value = M;
+impl<M> MergeWith<Self> for (ExprMap<DefaultKey>, SlotMap<DefaultKey, M>)
+where
+    M: MergeWith<M>,
+{
+    type Value = M::Value;
 
-    fn merge_with<F>(&mut self, mut that: Self, func: &mut F)
-    where
-        F: FnMut(&mut Self::Value, Self::Value),
-    {
-        ExprMap::<DefaultKey>::merge_with(&mut self.0, that.0, &mut |v, w| {
+    fn merge_with(&mut self, mut that: Self, func: &mut dyn FnMut(&mut Self::Value, Self::Value)) {
+        self.0.merge_with(that.0, &mut |v, w| {
             let m1 = &mut self.1[*v];
             let m2 = that.1.remove(w).unwrap();
-            func(m1, m2);
+            m1.merge_with(m2, func);
         });
     }
 }
@@ -184,10 +177,7 @@ where
 {
     type Value = V;
 
-    fn merge_with<F>(&mut self, that: Self, func: &mut F)
-    where
-        F: FnMut(&mut Self::Value, Self::Value),
-    {
+    fn merge_with(&mut self, that: Self, func: &mut dyn FnMut(&mut Self::Value, Self::Value)) {
         for (k2, v2) in that {
             match self.entry(k2) {
                 std::collections::hash_map::Entry::Occupied(mut entry) => {
@@ -204,9 +194,7 @@ where
 trait MergeWith<M> {
     type Value;
 
-    fn merge_with<F>(&mut self, that: M, func: &mut F)
-    where
-        F: FnMut(&mut Self::Value, Self::Value);
+    fn merge_with(&mut self, that: M, func: &mut dyn FnMut(&mut Self::Value, Self::Value));
 }
 
 #[cfg(test)]
