@@ -18,22 +18,20 @@ pub struct Many_ExprMap<V> {
     app: (ExprMap<DefaultKey>, SlotMap<DefaultKey, ExprMap<V>>),
 }
 
-impl<V> Many_ExprMap<V> {
-    pub fn new() -> Self {
-        Self {
-            zero: None,
-            var: HashMap::new(),
-            app: (ExprMap::Empty, SlotMap::new()),
-        }
-    }
-}
-
 impl<V> MapApi for Many_ExprMap<V> {
     type K = Expr;
     type V = V;
 
+    fn empty() -> Self {
+        Self {
+            zero: MapApi::empty(),
+            var: MapApi::empty(),
+            app: MapApi::empty(),
+        }
+    }
+
     fn single(key: Expr, value: V) -> Self {
-        let mut m = Self::new();
+        let mut m = Self::empty();
 
         match key {
             Expr::Zero => {
@@ -100,15 +98,13 @@ pub enum ExprMap<V> {
     Many(Box<Many_ExprMap<V>>),
 }
 
-impl<V> ExprMap<V> {
-    pub fn new() -> Self {
-        Self::Empty
-    }
-}
-
 impl<V> MapApi for ExprMap<V> {
     type K = Expr;
     type V = V;
+
+    fn empty() -> Self {
+        Self::Empty
+    }
 
     fn single(key: Expr, value: V) -> Self {
         Self::One(key, value)
@@ -199,6 +195,10 @@ where
     type K = M::K;
     type V = V;
 
+    fn empty() -> Self {
+        (M::empty(), SlotMap::new())
+    }
+
     fn single(key: M::K, value: V) -> Self {
         let mut slotmap = SlotMap::new();
         let slot_k = slotmap.insert(value);
@@ -232,6 +232,10 @@ where
     type K = K;
     type V = V;
 
+    fn empty() -> Self {
+        HashMap::new()
+    }
+
     fn single(key: K, value: V) -> Self {
         Self::from_iter([(key, value)])
     }
@@ -262,6 +266,10 @@ impl<V> MapApi for Option<V> {
     type K = ();
     type V = V;
 
+    fn empty() -> Self {
+        None
+    }
+
     fn single(key: Self::K, value: Self::V) -> Self {
         Some(value)
     }
@@ -283,6 +291,7 @@ trait MapApi {
     type K;
     type V;
 
+    fn empty() -> Self;
     fn single(key: Self::K, value: Self::V) -> Self;
     fn get(&self, key: &Self::K) -> Option<&Self::V>;
     fn remove(&mut self, key: &Self::K) -> Option<Self::V>;
@@ -302,7 +311,7 @@ mod test {
 
     #[test]
     fn test_var_key() {
-        let mut em = ExprMap::<String>::new();
+        let mut em = ExprMap::<String>::empty();
         let key = Expr::Var(42);
         let value = String::from("hello");
         em.insert(key.clone(), value.clone());
@@ -315,7 +324,7 @@ mod test {
 
     #[test]
     fn test_app_key() {
-        let mut em = ExprMap::<String>::new();
+        let mut em = ExprMap::<String>::empty();
         let key = Expr::App(Box::new(Expr::Var(5)), Box::new(Expr::Var(73)));
         let value = String::from("hello");
         em.insert(key.clone(), value.clone());
