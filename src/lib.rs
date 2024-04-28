@@ -30,18 +30,18 @@ impl<V> MapApi for Many_ExprMap<V> {
         }
     }
 
-    fn single(key: Expr, value: V) -> Self {
+    fn one(key: Expr, value: V) -> Self {
         let mut m = Self::empty();
 
         match key {
             Expr::Zero => {
-                m.zero = MapApi::single((), value);
+                m.zero = MapApi::one((), value);
             }
             Expr::Var(k) => {
-                m.var = MapApi::single(k, value);
+                m.var = MapApi::one(k, value);
             }
             Expr::App(f, x) => {
-                m.app = MapApi::single(*f, MapApi::single(*x, value));
+                m.app = MapApi::one(*f, MapApi::one(*x, value));
             }
         }
 
@@ -106,7 +106,7 @@ impl<V> MapApi for ExprMap<V> {
         Self::Empty
     }
 
-    fn single(key: Expr, value: V) -> Self {
+    fn one(key: Expr, value: V) -> Self {
         Self::One(key, value)
     }
 
@@ -165,18 +165,18 @@ impl<V> MapApi for ExprMap<V> {
                 *self = old_self;
             }
             (Self::One(k1, v1), Self::One(k2, v2)) => {
-                let mut m1 = Many_ExprMap::single(k1, v1);
-                let m2 = Many_ExprMap::single(k2, v2);
+                let mut m1 = Many_ExprMap::one(k1, v1);
+                let m2 = Many_ExprMap::one(k2, v2);
                 m1.merge_with(m2, func);
                 *self = Self::Many(Box::new(m1));
             }
             (Self::Many(mut m1), Self::One(k2, v2)) => {
-                let m2 = Many_ExprMap::single(k2, v2);
+                let m2 = Many_ExprMap::one(k2, v2);
                 m1.merge_with(m2, func);
                 *self = Self::Many(m1);
             }
             (Self::One(k1, v1), Self::Many(m2)) => {
-                let mut m1 = Many_ExprMap::single(k1, v1);
+                let mut m1 = Many_ExprMap::one(k1, v1);
                 m1.merge_with(*m2, func);
                 *self = Self::Many(Box::new(m1));
             }
@@ -199,10 +199,10 @@ where
         (M::empty(), SlotMap::new())
     }
 
-    fn single(key: M::K, value: V) -> Self {
+    fn one(key: M::K, value: V) -> Self {
         let mut slotmap = SlotMap::new();
         let slot_k = slotmap.insert(value);
-        (M::single(key, slot_k), slotmap)
+        (M::one(key, slot_k), slotmap)
     }
 
     fn get(&self, key: &M::K) -> Option<&V> {
@@ -236,7 +236,7 @@ where
         HashMap::new()
     }
 
-    fn single(key: K, value: V) -> Self {
+    fn one(key: K, value: V) -> Self {
         Self::from_iter([(key, value)])
     }
 
@@ -270,7 +270,7 @@ impl<V> MapApi for Option<V> {
         None
     }
 
-    fn single(key: Self::K, value: Self::V) -> Self {
+    fn one(key: Self::K, value: Self::V) -> Self {
         Some(value)
     }
 
@@ -292,7 +292,8 @@ trait MapApi {
     type V;
 
     fn empty() -> Self;
-    fn single(key: Self::K, value: Self::V) -> Self;
+    fn one(key: Self::K, value: Self::V) -> Self;
+
     fn get(&self, key: &Self::K) -> Option<&Self::V>;
     fn remove(&mut self, key: &Self::K) -> Option<Self::V>;
     fn merge_with(&mut self, that: Self, func: &mut dyn FnMut(&mut Self::V, Self::V));
@@ -301,7 +302,7 @@ trait MapApi {
     where
         Self: Sized,
     {
-        self.merge_with(Self::single(key, value), &mut |v, w| *v = w);
+        self.merge_with(Self::one(key, value), &mut |v, w| *v = w);
     }
 }
 
