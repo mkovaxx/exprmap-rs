@@ -27,6 +27,26 @@ impl<V> Many_ExprMap<V> {
         }
     }
 
+    pub fn single(key: Expr, value: V) -> Self {
+        let mut m = Self::new();
+
+        match key {
+            Expr::Zero => {
+                m.zero = Some(value);
+            }
+            Expr::Var(k) => {
+                m.var.insert(k, value);
+            }
+            Expr::App(e1, e2) => {
+                m.app
+                    .0
+                    .insert(*e1, m.app.1.insert(ExprMap::One(*e2, value)));
+            }
+        }
+
+        m
+    }
+
     pub fn get(&self, key: &Expr) -> Option<&V> {
         match key {
             Expr::Zero => self.zero.as_ref(),
@@ -125,32 +145,35 @@ impl<V> MergeWith<Self> for ExprMap<V> {
 
     fn merge_with(&mut self, that: Self, func: &mut dyn FnMut(&mut Self::Value, Self::Value)) {
         // an offering to the Borrow Checker
-        let mut old_self = ExprMap::Empty;
+        let mut old_self = Self::Empty;
         std::mem::swap(self, &mut old_self);
 
         match (old_self, that) {
-            (ExprMap::Empty, that) => {
+            (Self::Empty, that) => {
                 *self = that;
             }
-            (old_self, ExprMap::Empty) => {
+            (old_self, Self::Empty) => {
                 *self = old_self;
             }
-            (ExprMap::One(k1, v1), ExprMap::One(k2, v2)) => {
-                let mut m = Box::new(Many_ExprMap::new());
-                todo!();
-                *self = ExprMap::Many(m);
+            (Self::One(k1, v1), Self::One(k2, v2)) => {
+                let mut m1 = Many_ExprMap::single(k1, v1);
+                let m2 = Many_ExprMap::single(k2, v2);
+                m1.merge_with(m2, func);
+                *self = Self::Many(Box::new(m1));
             }
-            (ExprMap::Many(mut m1), ExprMap::One(k2, v2)) => {
-                todo!();
-                *self = ExprMap::Many(m1);
+            (Self::Many(mut m1), Self::One(k2, v2)) => {
+                let m2 = Many_ExprMap::single(k2, v2);
+                m1.merge_with(m2, func);
+                *self = Self::Many(m1);
             }
-            (ExprMap::One(k1, v1), ExprMap::Many(mut m2)) => {
-                todo!();
-                *self = ExprMap::Many(m2);
-            }
-            (ExprMap::Many(mut m1), ExprMap::Many(m2)) => {
+            (Self::One(k1, v1), Self::Many(m2)) => {
+                let mut m1 = Many_ExprMap::single(k1, v1);
                 m1.merge_with(*m2, func);
-                *self = ExprMap::Many(m1);
+                *self = Self::Many(Box::new(m1));
+            }
+            (Self::Many(mut m1), Self::Many(m2)) => {
+                m1.merge_with(*m2, func);
+                *self = Self::Many(m1);
             }
         }
     }
