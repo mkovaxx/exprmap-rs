@@ -26,57 +26,69 @@ impl<V> Many_ExprMap<V> {
             app: (ExprMap::Empty, SlotMap::new()),
         }
     }
+}
 
-    pub fn single(key: Expr, value: V) -> Self {
+impl<V> MapApi for Many_ExprMap<V> {
+    type K = Expr;
+    type V = V;
+
+    fn single(key: Expr, value: V) -> Self {
         let mut m = Self::new();
 
         match key {
             Expr::Zero => {
-                m.zero = Some(value);
+                m.zero = MapApi::single((), value);
             }
             Expr::Var(k) => {
-                m.var.insert(k, value);
+                m.var = MapApi::single(k, value);
             }
-            Expr::App(e1, e2) => {
-                m.app
-                    .0
-                    .insert(*e1, m.app.1.insert(ExprMap::One(*e2, value)));
+            Expr::App(f, x) => {
+                m.app = MapApi::single(*f, MapApi::single(*x, value));
             }
         }
 
         m
     }
 
-    pub fn get(&self, key: &Expr) -> Option<&V> {
+    fn get(&self, key: &Expr) -> Option<&V> {
         match key {
-            Expr::Zero => self.zero.as_ref(),
-            Expr::Var(id) => self.var.get(id),
+            Expr::Zero => self.zero.get(&()),
+            Expr::Var(id) => {
+                let v0 = &self.var;
+                let v1 = v0.get(id)?;
+                Some(v1)
+            }
             Expr::App(f, x) => {
-                let store_key = self.app.0.get(f)?;
-                self.app.1[*store_key].get(x)
+                let v0 = &self.app;
+                let v1 = v0.get(&f)?;
+                let v2 = v1.get(&x)?;
+                Some(v2)
             }
         }
     }
 
-    pub fn remove(&mut self, key: &Expr) -> Option<V> {
+    fn remove(&mut self, key: &Expr) -> Option<V> {
         match key {
-            Expr::Zero => self.zero.take(),
-            Expr::Var(id) => self.var.remove(id),
+            Expr::Zero => self.zero.remove(&()),
+            Expr::Var(id) => {
+                let v0 = &mut self.var;
+                let mut v1 = v0.remove(id)?;
+                Some(v1)
+            }
             Expr::App(f, x) => {
-                let store_key = self.app.0.remove(&f)?;
-                self.app.1[store_key].remove(x)
+                let v0 = &mut self.app;
+                let mut v1 = v0.remove(&f)?;
+                let mut v2 = v1.remove(&x)?;
+                Some(v2)
             }
         }
     }
-}
 
-impl<V> MergeWith<Self> for Many_ExprMap<V> {
-    type Value = V;
-
-    fn merge_with(&mut self, that: Self, func: &mut dyn FnMut(&mut Self::Value, Self::Value)) {
-        // TODO: self.zero
+    fn merge_with(&mut self, that: Self, func: &mut dyn FnMut(&mut V, V)) {
+        self.zero.merge_with(that.zero, func);
         self.var.merge_with(that.var, func);
-        self.app.merge_with(that.app, func);
+        self.app
+            .merge_with(that.app, &mut |m1, m2| m1.merge_with(m2, func));
     }
 }
 
@@ -92,8 +104,17 @@ impl<V> ExprMap<V> {
     pub fn new() -> Self {
         Self::Empty
     }
+}
 
-    pub fn get(&self, key: &Expr) -> Option<&V> {
+impl<V> MapApi for ExprMap<V> {
+    type K = Expr;
+    type V = V;
+
+    fn single(key: Expr, value: V) -> Self {
+        Self::One(key, value)
+    }
+
+    fn get(&self, key: &Expr) -> Option<&V> {
         match self {
             ExprMap::Empty => None,
             ExprMap::One(k, value) => {
@@ -107,11 +128,7 @@ impl<V> ExprMap<V> {
         }
     }
 
-    pub fn insert(&mut self, key: Expr, value: V) {
-        self.merge_with(ExprMap::One(key, value), &mut |v, w| *v = w);
-    }
-
-    pub fn remove(&mut self, key: &Expr) -> Option<V> {
+    fn remove(&mut self, key: &Expr) -> Option<V> {
         // an offering to the Borrow Checker
         let mut old_self = ExprMap::Empty;
         std::mem::swap(self, &mut old_self);
@@ -138,12 +155,8 @@ impl<V> ExprMap<V> {
             }
         }
     }
-}
 
-impl<V> MergeWith<Self> for ExprMap<V> {
-    type Value = V;
-
-    fn merge_with(&mut self, that: Self, func: &mut dyn FnMut(&mut Self::Value, Self::Value)) {
+    fn merge_with(&mut self, that: Self, func: &mut dyn FnMut(&mut V, V)) {
         // an offering to the Borrow Checker
         let mut old_self = Self::Empty;
         std::mem::swap(self, &mut old_self);
@@ -179,28 +192,59 @@ impl<V> MergeWith<Self> for ExprMap<V> {
     }
 }
 
-impl<M> MergeWith<Self> for (ExprMap<DefaultKey>, SlotMap<DefaultKey, M>)
+impl<M, V> MapApi for (M, SlotMap<DefaultKey, V>)
 where
-    M: MergeWith<M>,
+    M: MapApi<V = DefaultKey>,
 {
-    type Value = M::Value;
+    type K = M::K;
+    type V = V;
 
-    fn merge_with(&mut self, mut that: Self, func: &mut dyn FnMut(&mut Self::Value, Self::Value)) {
-        self.0.merge_with(that.0, &mut |v, w| {
-            let m1 = &mut self.1[*v];
-            let m2 = that.1.remove(w).unwrap();
-            m1.merge_with(m2, func);
+    fn single(key: M::K, value: V) -> Self {
+        let mut slotmap = SlotMap::new();
+        let slot_k = slotmap.insert(value);
+        (M::single(key, slot_k), slotmap)
+    }
+
+    fn get(&self, key: &M::K) -> Option<&V> {
+        let slot_k = self.0.get(key)?;
+        self.1.get(*slot_k)
+    }
+
+    fn remove(&mut self, key: &M::K) -> Option<V> {
+        let slot_k = self.0.remove(key)?;
+        let value = self.1.remove(slot_k).unwrap();
+        Some(value)
+    }
+
+    fn merge_with(&mut self, mut that: Self, func: &mut dyn FnMut(&mut V, V)) {
+        self.0.merge_with(that.0, &mut |slot_k1, slot_k2| {
+            let value1 = &mut self.1[*slot_k1];
+            let value2 = that.1.remove(slot_k2).unwrap();
+            func(value1, value2);
         });
     }
 }
 
-impl<K, V> MergeWith<Self> for HashMap<K, V>
+impl<K, V> MapApi for HashMap<K, V>
 where
     K: Eq + Hash,
 {
-    type Value = V;
+    type K = K;
+    type V = V;
 
-    fn merge_with(&mut self, that: Self, func: &mut dyn FnMut(&mut Self::Value, Self::Value)) {
+    fn single(key: K, value: V) -> Self {
+        Self::from_iter([(key, value)])
+    }
+
+    fn get(&self, key: &K) -> Option<&V> {
+        self.get(key)
+    }
+
+    fn remove(&mut self, key: &K) -> Option<V> {
+        self.remove(key)
+    }
+
+    fn merge_with(&mut self, that: Self, func: &mut dyn FnMut(&mut V, V)) {
         for (k2, v2) in that {
             match self.entry(k2) {
                 std::collections::hash_map::Entry::Occupied(mut entry) => {
@@ -214,15 +258,47 @@ where
     }
 }
 
-trait MergeWith<M> {
-    type Value;
+impl<V> MapApi for Option<V> {
+    type K = ();
+    type V = V;
 
-    fn merge_with(&mut self, that: M, func: &mut dyn FnMut(&mut Self::Value, Self::Value));
+    fn single(key: Self::K, value: Self::V) -> Self {
+        Some(value)
+    }
+
+    fn get(&self, key: &Self::K) -> Option<&Self::V> {
+        self.as_ref()
+    }
+
+    fn remove(&mut self, key: &Self::K) -> Option<Self::V> {
+        self.take()
+    }
+
+    fn merge_with(&mut self, that: Self, func: &mut dyn FnMut(&mut Self::V, Self::V)) {
+        todo!()
+    }
+}
+
+trait MapApi {
+    type K;
+    type V;
+
+    fn single(key: Self::K, value: Self::V) -> Self;
+    fn get(&self, key: &Self::K) -> Option<&Self::V>;
+    fn remove(&mut self, key: &Self::K) -> Option<Self::V>;
+    fn merge_with(&mut self, that: Self, func: &mut dyn FnMut(&mut Self::V, Self::V));
+
+    fn insert(&mut self, key: Self::K, value: Self::V)
+    where
+        Self: Sized,
+    {
+        self.merge_with(Self::single(key, value), &mut |v, w| *v = w);
+    }
 }
 
 #[cfg(test)]
 mod test {
-    use super::{Expr, ExprMap};
+    use super::{Expr, ExprMap, MapApi};
 
     #[test]
     fn test_var_key() {
