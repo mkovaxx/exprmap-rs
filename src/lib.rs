@@ -129,15 +129,15 @@ impl<V> MapApi for ExprMap<V> {
 
     fn get(&self, key: &Expr) -> Option<&V> {
         match self {
-            ExprMap::Empty => None,
-            ExprMap::One(k, value) => {
+            Self::Empty => None,
+            Self::One(k, value) => {
                 if k == key {
                     Some(value)
                 } else {
                     None
                 }
             }
-            ExprMap::Many(m) => m.get(key),
+            Self::Many(m) => m.get(key),
         }
     }
 
@@ -147,19 +147,19 @@ impl<V> MapApi for ExprMap<V> {
         std::mem::swap(self, &mut old_self);
 
         match old_self {
-            ExprMap::Empty => None,
-            ExprMap::One(k, value) => {
+            Self::Empty => None,
+            Self::One(k, value) => {
                 if k == *key {
                     Some(value)
                 } else {
-                    *self = ExprMap::One(k, value);
+                    *self = Self::One(k, value);
                     None
                 }
             }
-            ExprMap::Many(mut m) => {
+            Self::Many(mut m) => {
                 let value = m.remove(key);
                 // TODO: collapse into One when possible
-                *self = ExprMap::Many(m);
+                *self = Self::Many(m);
                 value
             }
         }
@@ -171,15 +171,15 @@ impl<V> MapApi for ExprMap<V> {
         std::mem::swap(self, &mut old_self);
 
         match old_self {
-            ExprMap::Empty => {
+            Self::Empty => {
                 *self = Self::One(key, value);
             }
-            ExprMap::One(k, v) => {
+            Self::One(k, v) => {
                 let mut m = Box::new(Many_ExprMap::one(k, v));
                 m.insert_with(key, value, func);
                 *self = Self::Many(m);
             }
-            ExprMap::Many(mut m) => {
+            Self::Many(mut m) => {
                 m.insert_with(key, value, func);
                 *self = Self::Many(m);
             }
