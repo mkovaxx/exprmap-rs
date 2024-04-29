@@ -58,8 +58,8 @@ impl<V> MapApi for Many_ExprMap<V> {
             }
             Expr::App(f, x) => {
                 let v0 = &self.app;
-                let v1 = v0.get(&f)?;
-                let v2 = v1.get(&x)?;
+                let v1 = v0.get(f)?;
+                let v2 = v1.get(x)?;
                 Some(v2)
             }
         }
@@ -75,8 +75,8 @@ impl<V> MapApi for Many_ExprMap<V> {
             }
             Expr::App(f, x) => {
                 let v0 = &mut self.app;
-                let mut v1 = v0.remove(&f)?;
-                let mut v2 = v1.remove(&x)?;
+                let mut v1 = v0.remove(f)?;
+                let mut v2 = v1.remove(x)?;
                 Some(v2)
             }
         }
