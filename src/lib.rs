@@ -1,6 +1,6 @@
-use std::{collections::HashMap, hash::Hash};
+use std::{any::Any, collections::HashMap, hash::Hash};
 
-use slotmap::{DefaultKey, SlotMap};
+trait AnySized: Any + Sized {}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Expr {
@@ -9,16 +9,16 @@ pub enum Expr {
     App(Box<Expr>, Box<Expr>),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 #[allow(non_camel_case_types)]
 pub struct Many_ExprMap<V> {
     zero: Option<V>,
     var: HashMap<usize, V>,
-    // factor `ExprMap<ExprMap<V>>` into two parts to prevent recursive type weirdness
-    app: (ExprMap<DefaultKey>, SlotMap<DefaultKey, ExprMap<V>>),
+    // ExprMap<ExprMap<V>>
+    app: ExprMap<Box<dyn Any>>,
 }
 
-impl<V> MapApi for Many_ExprMap<V> {
+impl<V: 'static> MapApi for Many_ExprMap<V> {
     type K = Expr;
     type V = V;
 
@@ -41,7 +41,8 @@ impl<V> MapApi for Many_ExprMap<V> {
                 m.var = MapApi::one(k, value);
             }
             Expr::App(f, x) => {
-                m.app = MapApi::one(*f, MapApi::one(*x, value));
+                let value: Box<dyn Any> = Box::new(ExprMap::one(*x, value));
+                m.app = MapApi::one(*f, value);
             }
         }
 
@@ -59,7 +60,7 @@ impl<V> MapApi for Many_ExprMap<V> {
             Expr::App(f, x) => {
                 let v0 = &self.app;
                 let v1 = v0.get(f)?;
-                let v2 = v1.get(x)?;
+                let v2 = v1.downcast_ref::<ExprMap<V>>().unwrap().get(x)?;
                 Some(v2)
             }
         }
@@ -70,13 +71,13 @@ impl<V> MapApi for Many_ExprMap<V> {
             Expr::Zero => self.zero.remove(&()),
             Expr::Var(id) => {
                 let v0 = &mut self.var;
-                let mut v1 = v0.remove(id)?;
+                let v1 = v0.remove(id)?;
                 Some(v1)
             }
             Expr::App(f, x) => {
                 let v0 = &mut self.app;
-                let mut v1 = v0.remove(f)?;
-                let mut v2 = v1.remove(x)?;
+                let v1 = v0.remove(f)?;
+                let v2 = v1.downcast::<ExprMap<V>>().unwrap().remove(x)?;
                 Some(v2)
             }
         }
@@ -85,7 +86,8 @@ impl<V> MapApi for Many_ExprMap<V> {
     fn for_each(&mut self, func: &mut dyn FnMut(&mut V)) {
         self.zero.for_each(func);
         self.var.for_each(func);
-        self.app.for_each(&mut |m| m.for_each(func));
+        self.app
+            .for_each(&mut |m| m.downcast_mut::<ExprMap<V>>().unwrap().for_each(func));
     }
 
     fn insert_with(
@@ -97,23 +99,29 @@ impl<V> MapApi for Many_ExprMap<V> {
         match key {
             Expr::Zero => self.zero.insert_with((), value, func),
             Expr::Var(k) => self.var.insert_with(k, value, func),
-            Expr::App(f, x) => self
-                .app
-                .insert_with(*f, ExprMap::one(*x, value), &mut |m1, m2| {
-                    m1.merge_with(m2, func)
-                }),
+            Expr::App(f, x) => {
+                self.app
+                    .insert_with(*f, Box::new(ExprMap::one(*x, value)), &mut |m1, m2| {
+                        let m1 = m1.downcast_mut::<ExprMap<V>>().unwrap();
+                        let m2 = m2.downcast::<ExprMap<V>>().unwrap();
+                        m1.merge_with(*m2, func)
+                    })
+            }
         }
     }
 
     fn merge_with(&mut self, that: Self, func: &mut dyn FnMut(&mut V, V)) {
         self.zero.merge_with(that.zero, func);
         self.var.merge_with(that.var, func);
-        self.app
-            .merge_with(that.app, &mut |m1, m2| m1.merge_with(m2, func));
+        self.app.merge_with(that.app, &mut |m1, m2| {
+            let m1 = m1.downcast_mut::<ExprMap<V>>().unwrap();
+            let m2 = m2.downcast::<ExprMap<V>>().unwrap();
+            m1.merge_with(*m2, func);
+        });
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub enum ExprMap<V> {
     Empty,
     // TODO: consider putting `Box`es in here
@@ -121,7 +129,7 @@ pub enum ExprMap<V> {
     Many(Box<Many_ExprMap<V>>),
 }
 
-impl<V> MapApi for ExprMap<V> {
+impl<V: 'static> MapApi for ExprMap<V> {
     type K = Expr;
     type V = V;
 
@@ -231,66 +239,6 @@ impl<V> MapApi for ExprMap<V> {
                 *self = Self::Many(m1);
             }
         }
-    }
-}
-
-impl<M, V> MapApi for (M, SlotMap<DefaultKey, V>)
-where
-    M: MapApi<V = DefaultKey>,
-{
-    type K = M::K;
-    type V = V;
-
-    fn empty() -> Self {
-        (M::empty(), SlotMap::new())
-    }
-
-    fn one(key: M::K, value: V) -> Self {
-        let mut slotmap = SlotMap::new();
-        let slot_k = slotmap.insert(value);
-        (M::one(key, slot_k), slotmap)
-    }
-
-    fn get(&self, key: &M::K) -> Option<&V> {
-        let slot_k = self.0.get(key)?;
-        let value = &self.1[*slot_k];
-        Some(value)
-    }
-
-    fn remove(&mut self, key: &M::K) -> Option<V> {
-        let slot_k = self.0.remove(key)?;
-        let value = self.1.remove(slot_k).unwrap();
-        Some(value)
-    }
-
-    fn for_each(&mut self, func: &mut dyn FnMut(&mut V)) {
-        for (_, value) in &mut self.1 {
-            func(value);
-        }
-    }
-
-    fn merge_with(&mut self, mut that: Self, func: &mut dyn FnMut(&mut V, V)) {
-        // first move all the slots into the SlotMap of the left side
-        that.0.for_each(&mut |slot_k2| {
-            let value2 = that.1.remove(*slot_k2).unwrap();
-            *slot_k2 = self.1.insert(value2);
-        });
-
-        // now while merging the DefaultKey entries, only use the left SlotMap
-        self.0.merge_with(that.0, &mut |slot_k1, slot_k2| {
-            let value2 = self.1.remove(slot_k2).unwrap();
-            let value1 = &mut self.1[*slot_k1];
-            func(value1, value2);
-        });
-    }
-
-    fn insert_with(
-        &mut self,
-        key: Self::K,
-        value: Self::V,
-        func: &mut dyn FnMut(&mut Self::V, Self::V),
-    ) {
-        self.merge_with(Self::one(key, value), func);
     }
 }
 
@@ -457,20 +405,5 @@ mod test {
         let result = em.get(&key);
 
         assert_eq!(result, Some(&value));
-    }
-
-    #[test]
-    fn test_factorized_map() {
-        use slotmap::{DefaultKey, SlotMap};
-
-        let mut fm: (ExprMap<DefaultKey>, SlotMap<DefaultKey, &str>) = MapApi::empty();
-
-        let key = Expr::App(Expr::Var(0).into(), Expr::Var(1).into());
-        fm.insert(key.clone(), "test");
-        assert_eq!(fm.get(&key), Some(&"test"));
-
-        let key = Expr::App(Expr::Var(2).into(), Expr::Var(3).into());
-        fm.insert(key.clone(), "another_test");
-        assert_eq!(fm.get(&key), Some(&"another_test"));
     }
 }
