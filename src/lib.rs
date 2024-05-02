@@ -272,7 +272,7 @@ where
         // first move all the slots into the SlotMap of the left side
         that.0.for_each(&mut |slot_k2| {
             let value2 = that.1.remove(*slot_k2).unwrap();
-            *slot_k2 = self.1.insert(value2)
+            *slot_k2 = self.1.insert(value2);
         });
 
         // now while merging the DefaultKey entries, only use the left SlotMap
