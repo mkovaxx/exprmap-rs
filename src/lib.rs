@@ -82,6 +82,12 @@ impl<V> MapApi for Many_ExprMap<V> {
         }
     }
 
+    fn for_each(&mut self, func: &mut dyn FnMut(&mut V)) {
+        self.zero.for_each(func);
+        self.var.for_each(func);
+        self.app.for_each(&mut |m| m.for_each(func));
+    }
+
     fn insert_with(
         &mut self,
         key: Self::K,
@@ -162,6 +168,14 @@ impl<V> MapApi for ExprMap<V> {
                 *self = Self::Many(m);
                 value
             }
+        }
+    }
+
+    fn for_each(&mut self, func: &mut dyn FnMut(&mut V)) {
+        match self {
+            ExprMap::Empty => {}
+            ExprMap::One(_, value) => func(value),
+            ExprMap::Many(m) => m.for_each(func),
         }
     }
 
@@ -248,10 +262,23 @@ where
         Some(value)
     }
 
+    fn for_each(&mut self, func: &mut dyn FnMut(&mut V)) {
+        for (_, value) in &mut self.1 {
+            func(value);
+        }
+    }
+
     fn merge_with(&mut self, mut that: Self, func: &mut dyn FnMut(&mut V, V)) {
+        // first move all the slots into the SlotMap of the left side
+        that.0.for_each(&mut |slot_k2| {
+            let value2 = that.1.remove(*slot_k2).unwrap();
+            *slot_k2 = self.1.insert(value2)
+        });
+
+        // now while merging the DefaultKey entries, only use the left SlotMap
         self.0.merge_with(that.0, &mut |slot_k1, slot_k2| {
+            let value2 = self.1.remove(slot_k2).unwrap();
             let value1 = &mut self.1[*slot_k1];
-            let value2 = that.1.remove(slot_k2).unwrap();
             func(value1, value2);
         });
     }
@@ -287,6 +314,12 @@ where
 
     fn remove(&mut self, key: &K) -> Option<V> {
         self.remove(key)
+    }
+
+    fn for_each(&mut self, func: &mut dyn FnMut(&mut V)) {
+        for (_, value) in self {
+            func(value);
+        }
     }
 
     fn insert_with(
@@ -339,6 +372,13 @@ impl<V> MapApi for Option<V> {
         self.take()
     }
 
+    fn for_each(&mut self, func: &mut dyn FnMut(&mut V)) {
+        match self {
+            Some(value) => func(value),
+            None => {}
+        }
+    }
+
     fn insert_with(&mut self, _key: (), value: V, func: &mut dyn FnMut(&mut V, V)) {
         match self {
             Some(old_value) => func(old_value, value),
@@ -372,6 +412,9 @@ trait MapApi {
 
     fn get(&self, key: &Self::K) -> Option<&Self::V>;
     fn remove(&mut self, key: &Self::K) -> Option<Self::V>;
+
+    fn for_each(&mut self, func: &mut dyn FnMut(&mut Self::V));
+
     fn insert_with(
         &mut self,
         key: Self::K,
@@ -413,5 +456,20 @@ mod test {
         let result = em.get(&key);
 
         assert_eq!(result, Some(&value));
+    }
+
+    #[test]
+    fn test_factorized_map() {
+        use slotmap::{DefaultKey, SlotMap};
+
+        let mut fm: (ExprMap<DefaultKey>, SlotMap<DefaultKey, &str>) = MapApi::empty();
+
+        let key = Expr::App(Expr::Var(0).into(), Expr::Var(1).into());
+        fm.insert(key.clone(), "test");
+        assert_eq!(fm.get(&key), Some(&"test"));
+
+        let key = Expr::App(Expr::Var(2).into(), Expr::Var(3).into());
+        fm.insert(key.clone(), "another_test");
+        assert_eq!(fm.get(&key), Some(&"another_test"));
     }
 }
