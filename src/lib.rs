@@ -383,10 +383,10 @@ mod test {
 
     #[test]
     fn test_var_key() {
-        let mut em = ExprMap::<String>::empty();
+        let mut em = ExprMap::<&str>::empty();
         let key = Expr::Var(42);
-        let value = String::from("hello");
-        em.insert(key.clone(), value.clone());
+        let value = "hello";
+        em.insert(key.clone(), value);
         dbg!(&em);
 
         let result = em.get(&key);
@@ -396,10 +396,10 @@ mod test {
 
     #[test]
     fn test_app_key() {
-        let mut em = ExprMap::<String>::empty();
+        let mut em = ExprMap::<&str>::empty();
         let key = Expr::App(Box::new(Expr::Var(5)), Box::new(Expr::Var(73)));
-        let value = String::from("hello");
-        em.insert(key.clone(), value.clone());
+        let value = "hello";
+        em.insert(key.clone(), value);
         dbg!(&em);
 
         let result = em.get(&key);
