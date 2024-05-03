@@ -1,7 +1,5 @@
 use std::{any::Any, collections::HashMap, hash::Hash};
 
-trait AnySized: Any + Sized {}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Expr {
     Zero,
